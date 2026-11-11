@@ -1,0 +1,72 @@
+{{- if .Values.metrics.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "hello.fullname" . }}
+  labels:
+    {{- include "hello.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "hello.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.metrics.serviceMonitor.interval }}
+{{- end }}
+{{- if .Values.metrics.rules.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "hello.fullname" . }}
+  labels:
+    {{- include "hello.labels" . | nindent 4 }}
+spec:
+  groups:
+    - name: hello.availability
+      rules:
+        - alert: HelloDown
+          expr: absent(up{job="{{ include "hello.fullname" . }}"} == 1)
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: No hello pod is being scraped successfully.
+            runbook_url: {{ .Values.metrics.rules.runbookUrl }}#hellodown
+        - alert: HelloHighErrorRate
+          expr: |
+            sum(rate(http_requests_total{job="{{ include "hello.fullname" . }}",status=~"5.."}[5m]))
+              /
+            sum(rate(http_requests_total{job="{{ include "hello.fullname" . }}"}[5m])) > 0.05
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: More than 5% of hello requests have failed for 10 minutes.
+            runbook_url: {{ .Values.metrics.rules.runbookUrl }}#hellohigherrorrate
+        - alert: HelloHighLatency
+          expr: |
+            histogram_quantile(0.99,
+              sum by (le) (rate(http_request_duration_seconds_bucket{job="{{ include "hello.fullname" . }}",path="/"}[5m]))
+            ) > 0.5
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: hello p99 latency has been above 500 ms for 10 minutes.
+            runbook_url: {{ .Values.metrics.rules.runbookUrl }}#hellohighlatency
+{{- end }}
+{{- if .Values.metrics.dashboard.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "hello.fullname" . }}-dashboard
+  labels:
+    {{- include "hello.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  hello.json: |-
+    {{- .Files.Get "files/dashboard.json" | nindent 4 }}
+{{- end }}

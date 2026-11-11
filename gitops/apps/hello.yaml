@@ -1,0 +1,29 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: hello
+  namespace: argocd
+  annotations:
+    # Monitoring goes first so the ServiceMonitor/PrometheusRule CRDs exist.
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/aosmonkul/platform-reference.git
+    targetRevision: main
+    path: deploy/chart
+    helm:
+      releaseName: hello
+      valueFiles:
+        - /deploy/envs/dev/values.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: hello
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

@@ -1,0 +1,118 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  app:
+    name: App lint and tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - run: pip install -r requirements.txt ruff==0.8.4
+      - run: ruff check .
+      - run: ruff format --check .
+      - run: python -m unittest -v
+
+  chart:
+    name: Helm chart lint and schema validation
+    runs-on: ubuntu-latest
+    env:
+      KUBECONFORM_VERSION: v0.8.0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
+      - name: Install kubeconform
+        run: |
+          curl -fsSL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
+            | sudo tar -xz -C /usr/local/bin kubeconform
+      - run: helm lint deploy/chart --strict
+      - name: Validate rendered manifests (defaults)
+        run: helm template hello deploy/chart | kubeconform -strict -summary
+      - name: Validate rendered manifests (dev environment)
+        run: |
+          helm template hello deploy/chart -f deploy/envs/dev/values.yaml --set autoscaling.enabled=true \
+            | kubeconform -strict -summary -ignore-missing-schemas
+      - name: Validate Argo CD manifests are well-formed
+        run: kubeconform -summary -ignore-missing-schemas gitops/
+
+  terraform:
+    name: Terraform fmt and validate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra/terraform
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+      - run: terraform fmt -check -diff -recursive
+      - run: terraform init -backend=false -input=false
+      - run: terraform validate
+
+  config-scan:
+    name: IaC and manifest misconfiguration scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+
+  e2e:
+    name: Build, scan and deploy to kind
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build image
+        run: docker build -t hello:ci app
+      - name: Scan image for fixable vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: hello:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
+      - uses: helm/kind-action@ea822c7bf1874f08e5a491df991c228edffc3376 # v1.15.2
+        with:
+          cluster_name: platform
+      - name: Load image into the cluster
+        run: kind load docker-image hello:ci --name platform
+      - name: Deploy the chart
+        run: |
+          helm upgrade --install hello deploy/chart \
+            --namespace hello --create-namespace \
+            --set image.repository=hello --set image.tag=ci \
+            --wait --timeout 3m
+      - name: Smoke test
+        run: ./scripts/smoke.sh hello
+      - name: Rolling restart keeps the service available
+        run: |
+          kubectl -n hello rollout restart deployment/hello
+          kubectl -n hello rollout status deployment/hello --timeout=3m
+          ./scripts/smoke.sh hello
+      - name: Cluster state on failure
+        if: failure()
+        run: |
+          kubectl -n hello get all
+          kubectl -n hello describe pods
+          kubectl -n hello logs -l app.kubernetes.io/name=hello --tail=50

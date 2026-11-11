@@ -1,0 +1,6 @@
+apiVersion: v2
+name: hello
+description: The hello service, packaged with the guard rails a platform team would expect.
+type: application
+version: 0.1.0
+appVersion: "dev"

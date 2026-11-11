@@ -1,0 +1,12 @@
+# Environment overrides for dev. The release workflow rewrites image.tag on
+# every merge to main; Argo CD picks the change up from Git.
+image:
+  tag: "dev"
+
+metrics:
+  serviceMonitor:
+    enabled: true
+  rules:
+    enabled: true
+  dashboard:
+    enabled: true

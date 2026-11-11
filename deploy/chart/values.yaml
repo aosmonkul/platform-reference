@@ -1,0 +1,52 @@
+replicaCount: 2
+
+image:
+  repository: ghcr.io/aosmonkul/platform-reference/hello
+  # Defaults to the chart's appVersion. CI overwrites the tag per environment
+  # in deploy/envs/<env>/values.yaml.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+service:
+  port: 80
+
+resources:
+  requests:
+    cpu: 25m
+    memory: 48Mi
+  limits:
+    memory: 96Mi
+
+# Seconds the app keeps serving after SIGTERM while it fails readiness.
+shutdownDelaySeconds: 5
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+networkPolicy:
+  enabled: true
+  # Namespaces, besides the release namespace, allowed to reach the pods.
+  allowedNamespaces:
+    - monitoring
+    - ingress-nginx
+
+# These need the Prometheus Operator CRDs (and Grafana's dashboard sidecar),
+# so they are off by default and switched on per environment.
+metrics:
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+  rules:
+    enabled: false
+    runbookUrl: https://github.com/aosmonkul/platform-reference/blob/main/docs/runbooks/hello.md
+  dashboard:
+    enabled: false
