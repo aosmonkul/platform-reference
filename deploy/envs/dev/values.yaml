@@ -1,7 +1,7 @@
 # Environment overrides for dev. The release workflow rewrites image.tag on
 # every merge to main; Argo CD picks the change up from Git.
 image:
-  tag: "c2e93a07db4c"
+  tag: "dbf40ab31beb"
 
 metrics:
   serviceMonitor:
